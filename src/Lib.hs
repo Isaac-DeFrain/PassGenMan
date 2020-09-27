@@ -6,6 +6,7 @@ module Lib
     , verifyPwd
     , addServiceManualPassword
     , addServiceRandomPassword
+    , removeService
     , changePmgPassword
     , changePmgUsername
     , changeServiceUsername
@@ -128,21 +129,28 @@ addServiceManualPassword ::
     -> Username -- ^ service username
     -> Password -- ^ service password
     -> IO ()
-addServiceManualPassword usr pwd srv srvUsr srvPwd =
-    if length srvPwd < 8
-        then error "Password must be at least 8 characters!"
-        else do
-            verified <- verifyPwd usr pwd
-            if verified
+addServiceManualPassword usr pwd srv srvUsr srvPwd = do
+    verified <- verifyPwd usr pwd
+    if verified
+        then do
+            putStrLn "Confirm new password: "
+            newPwd <- getLine
+            if newPwd == srvPwd
                 then do
-                    putStrLn "Confirm new password: "
-                    newPwd <- getLine
-                    if newPwd == srvPwd
-                        then do
-                            srvFilePath <- getUserServiceFilePath usr srv
-                            Sys.writeFile srvFilePath $ unlines [srvUsr, srvPwd]
-                        else error "Passwords do not match! Try again."
-                else error "Incorrect username/password!"
+                    srvFilePath <- getUserServiceFilePath usr srv
+                    Sys.writeFile srvFilePath $ unlines [srvUsr, srvPwd]
+                else error "Passwords do not match! Try again."
+        else error "Incorrect username/password!"
+
+-- | remove the specified service from the given user
+removeService :: Username -> Password -> Service -> IO ()
+removeService usr pwd srv = do
+    exists <- doesServiceExist usr pwd srv
+    if exists
+        then do
+            srvFilePath <- getUserServiceFilePath usr srv
+            Dir.removeFile srvFilePath
+        else error $ concat [srv, " is not a service registered to ", usr, " !"]
 
 -- | retrieve service username
 getServiceUsername :: Username -> Password -> Service -> IO String
