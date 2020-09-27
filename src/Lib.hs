@@ -7,6 +7,7 @@ module Lib
     , addServiceManualPassword
     , addServiceRandomPassword
     , changePmgPassword
+    , changePmgUsername
     , changeServiceUsername
     , changeServicePasswordRandom
     , changeServicePasswordManual
@@ -32,7 +33,7 @@ import Test.RandomStrings (onlyPrintable, randomASCII, randomString)
 -- | list of known users
 users :: IO [String]
 users = do
-    dir <- Dir.getAppUserDataDirectory "PassManGen"
+    dir <- getPmgDir
     sort . map removeDot <$> Dir.listDirectory dir
   where
     removeDot = drop 1
@@ -67,14 +68,18 @@ createUser usr pwd = do
   where
     hashStr = sha256 pwd
 
--- ^ delete a PassManGen user
+-- ^ remove a PassManGen user
 removeUser :: Username -> Password -> IO ()
 removeUser usr pwd = do
     verified <- verifyPwd usr pwd
     if verified
         then do
             putStrLn $
-                concat ["Are you sure you want to delete ", usr, "? (y = yes)"]
+                concat
+                    [ "Are you sure you want to remove "
+                    , usr
+                    , "'s account? (y = yes)"
+                    ]
             response <- getLine
             when (map toLower response == "y") $ do
                 usrDir <- getUserDir usr
@@ -182,21 +187,38 @@ getServiceData usr pwd srv = do
 getAllServiceData :: Username -> Password -> IO [(Service, Username, Password)]
 getAllServiceData usr pwd = mapM (getServiceData usr pwd) =<< services usr pwd
 
--- | manually enter old/new password
+-- | change PassManGen password
 changePmgPassword ::
        Username
-    -> Password -- ^ old password
-    -> Password -- ^ new password
+    -> Password -- ^ old PMG password
+    -> Password -- ^ new PMG password
     -> IO ()
 changePmgPassword usr old new = do
     verified <- verifyPwd usr old
-    when verified $ do
-        pwdFilePath <- getUserPwdFilePath usr
-        putStrLn "Confirm new password: "
-        pwd <- getLine
-        if pwd == new
-            then Sys.writeFile pwdFilePath $ sha256 new ++ "\n"
-            else error "Passwords do not match! Try again."
+    if verified
+        then do
+            pwdFilePath <- getUserPwdFilePath usr
+            putStrLn "Confirm new password: "
+            pwd <- getLine
+            if pwd == new
+                then Sys.writeFile pwdFilePath $ sha256 new ++ "\n"
+                else error "Passwords do not match! Try again."
+        else error "Incorrect username/password!"
+
+-- | change PassManGen username
+changePmgUsername ::
+       Username -- ^ old PMG username
+    -> Password
+    -> Username -- ^ new PMG username
+    -> IO ()
+changePmgUsername usr pwd new = do
+    verified <- verifyPwd usr pwd
+    if verified
+        then do
+            pmgDir <- getPmgDir
+            usrDir <- getUserDir usr
+            Dir.renameDirectory usrDir $ pmgDir ++ "/." ++ new
+        else error "Incorrect username/password!"
 
 -- | pseudorandomly generate new service password
 changeServicePasswordRandom ::
@@ -280,6 +302,10 @@ doesServiceExist usr pwd srv = do
     if verified
         then elem (map toLower srv) <$> services usr pwd
         else error "Incorrect username/password!"
+
+-- | PassManGen directory
+getPmgDir :: IO String
+getPmgDir = Dir.getAppUserDataDirectory "PassManGen"
 
 -- | file path for given user
 getUserDir :: Username -> IO FilePath

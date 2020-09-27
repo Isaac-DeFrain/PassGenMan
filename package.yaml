@@ -34,6 +34,7 @@ dependencies:
   - memory
   - random
   - random-strings
+  - optparse-applicative
 
 library:
   main:                 Lib.hs
@@ -56,6 +57,7 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - PassGenMan
+    - optparse-applicative
 
 tests:
   PassGenMan-test:
