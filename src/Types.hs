@@ -5,6 +5,7 @@
 module Types where
 
 import qualified Data.ByteArray as BA
+import Data.String
 import GHC.Generics (Generic(..))
 
 type Username = String
@@ -28,3 +29,6 @@ instance BA.ByteArrayAccess Password where
     length = BA.length
     withByteArray = BA.withByteArray
     copyByteArrayToPtr = BA.copyByteArrayToPtr
+
+instance Data.String.IsString (Maybe Password) where
+    fromString = read
