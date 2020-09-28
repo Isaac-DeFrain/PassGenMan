@@ -48,7 +48,7 @@ library:
   - random-strings
 
 executables:
-  PassGenMan-exe:
+  passgenman:
     main:                Main.hs
     source-dirs:         app
     ghc-options:

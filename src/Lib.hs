@@ -7,8 +7,8 @@ module Lib
     , addServiceManualPassword
     , addServiceRandomPassword
     , removeService
-    , changePmgPassword
-    , changePmgUsername
+    , changePgmPassword
+    , changePgmUsername
     , changeServiceUsername
     , changeServicePasswordRandom
     , changeServicePasswordManual
@@ -34,7 +34,7 @@ import Test.RandomStrings (onlyPrintable, randomASCII, randomString)
 -- | list of known users
 users :: IO [String]
 users = do
-    dir <- getPmgDir
+    dir <- getPgmDir
     sort . map removeDot <$> Dir.listDirectory dir
   where
     removeDot = drop 1
@@ -69,7 +69,7 @@ createUser usr pwd = do
   where
     hashStr = sha256 pwd
 
--- ^ remove a PassManGen user
+-- ^ remove a PassGenMan user
 removeUser :: Username -> Password -> IO ()
 removeUser usr pwd = do
     verified <- verifyPwd usr pwd
@@ -99,8 +99,8 @@ verifyPwd usr pwd = do
 
 -- | pseudorandomly create service password
 addServiceRandomPassword ::
-       Username -- ^ PassManGen username
-    -> Password -- ^ PassManGen password
+       Username -- ^ PassGenMan username
+    -> Password -- ^ PassGenMan password
     -> Service
     -> Username -- ^ service username
     -> Int -- ^ required length of password >= 8
@@ -123,8 +123,8 @@ addServiceRandomPassword usr pwd srv susr len = do
 
 -- | create service with manual password
 addServiceManualPassword ::
-       Username -- ^ PassManGen username
-    -> Password -- ^ PassManGen password
+       Username -- ^ PassGenMan username
+    -> Password -- ^ PassGenMan password
     -> Service
     -> Username -- ^ service username
     -> Password -- ^ service password
@@ -195,13 +195,13 @@ getServiceData usr pwd srv = do
 getAllServiceData :: Username -> Password -> IO [(Service, Username, Password)]
 getAllServiceData usr pwd = mapM (getServiceData usr pwd) =<< services usr pwd
 
--- | change PassManGen password
-changePmgPassword ::
+-- | change PassGenMan password
+changePgmPassword ::
        Username
-    -> Password -- ^ old PMG password
-    -> Password -- ^ new PMG password
+    -> Password -- ^ old PGM password
+    -> Password -- ^ new PGM password
     -> IO ()
-changePmgPassword usr old new = do
+changePgmPassword usr old new = do
     verified <- verifyPwd usr old
     if verified
         then do
@@ -213,25 +213,25 @@ changePmgPassword usr old new = do
                 else error "Passwords do not match! Try again."
         else error "Incorrect username/password!"
 
--- | change PassManGen username
-changePmgUsername ::
-       Username -- ^ old PMG username
+-- | change PassGenMan username
+changePgmUsername ::
+       Username -- ^ old PGM username
     -> Password
-    -> Username -- ^ new PMG username
+    -> Username -- ^ new PGM username
     -> IO ()
-changePmgUsername usr pwd new = do
+changePgmUsername usr pwd new = do
     verified <- verifyPwd usr pwd
     if verified
         then do
-            pmgDir <- getPmgDir
+            pgmDir <- getPgmDir
             usrDir <- getUserDir usr
-            Dir.renameDirectory usrDir $ pmgDir ++ "/." ++ new
+            Dir.renameDirectory usrDir $ pgmDir ++ "/." ++ new
         else error "Incorrect username/password!"
 
 -- | pseudorandomly generate new service password
 changeServicePasswordRandom ::
-       Username -- ^ PassManGen username
-    -> Password -- ^ PassManGen password
+       Username -- ^ PassGenMan username
+    -> Password -- ^ PassGenMan password
     -> Service
     -> Int -- ^ length of new service password
     -> IO ()
@@ -249,8 +249,8 @@ changeServicePasswordRandom usr pwd srv len = do
 
 -- | manually change service password
 changeServicePasswordManual ::
-       Username -- ^ PassManGen username
-    -> Password -- ^ PassManGen password
+       Username -- ^ PassGenMan username
+    -> Password -- ^ PassGenMan password
     -> Service
     -> Password -- ^ new service password
     -> IO ()
@@ -276,8 +276,8 @@ changeServicePasswordManual usr pwd srv srvPwd = do
 
 -- | pseudorandomly generate new service password
 changeServiceUsername ::
-       Username -- ^ PassManGen username
-    -> Password -- ^ PassManGen password
+       Username -- ^ PassGenMan username
+    -> Password -- ^ PassGenMan password
     -> Service
     -> Username -- ^ new service username
     -> IO ()
@@ -311,29 +311,29 @@ doesServiceExist usr pwd srv = do
         then elem (map toLower srv) <$> services usr pwd
         else error "Incorrect username/password!"
 
--- | PassManGen directory
-getPmgDir :: IO String
-getPmgDir = Dir.getAppUserDataDirectory "PassManGen"
+-- | PassGenMan directory
+getPgmDir :: IO String
+getPgmDir = Dir.getAppUserDataDirectory "PassGenMan"
 
 -- | file path for given user
 getUserDir :: Username -> IO FilePath
-getUserDir usr = Dir.getAppUserDataDirectory $ "PassManGen/." ++ usr
+getUserDir usr = Dir.getAppUserDataDirectory $ "PassGenMan/." ++ usr
 
 -- | password file path for given user
 getUserPwdFilePath :: Username -> IO FilePath
 getUserPwdFilePath usr =
-    Dir.getAppUserDataDirectory $ "PassManGen/." ++ usr ++ "/.pwd"
+    Dir.getAppUserDataDirectory $ "PassGenMan/." ++ usr ++ "/.pwd"
 
 -- | file path for given service and user
 getUserServiceFilePath :: Username -> Service -> IO FilePath
 getUserServiceFilePath usr srv =
     Dir.getAppUserDataDirectory $
-    "PassManGen/." ++ usr ++ "/.services/." ++ map toLower srv
+    "PassGenMan/." ++ usr ++ "/.services/." ++ map toLower srv
 
 -- | services directory for given user
 getUserServicesDir :: Username -> IO FilePath
 getUserServicesDir usr =
-    Dir.getAppUserDataDirectory $ "PassManGen/." ++ usr ++ "/.services"
+    Dir.getAppUserDataDirectory $ "PassGenMan/." ++ usr ++ "/.services"
 
 -- | retrieve user's password hash
 getUserPwdHash :: Username -> IO String
