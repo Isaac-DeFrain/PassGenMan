@@ -16,6 +16,7 @@ module Lib
     , getServicePassword
     , getServiceUsername
     , getAllServiceData
+    , getUserDir
     ) where
 
 import Data.Char (toLower)
@@ -32,7 +33,7 @@ import Test.RandomStrings (onlyPrintable, randomASCII, randomString)
 
 -- TODO: error handling?
 -- | list of known users
-users :: IO [String]
+users :: IO [Username]
 users = do
     dir <- getPgmDir
     sort . map removeDot <$> Dir.listDirectory dir
@@ -40,7 +41,7 @@ users = do
     removeDot = drop 1
 
 -- | list of services registered to the given user
-services :: Username -> Password -> IO [String]
+services :: Username -> Password -> IO [Service]
 services usr pwd = do
     verified <- verifyPwd usr pwd
     if verified
@@ -69,22 +70,15 @@ createUser usr pwd = do
   where
     hashStr = sha256 pwd
 
--- ^ remove a PassGenMan user
+-- TODO: verify removal intent?
+-- | remove a PassGenMan user
 removeUser :: Username -> Password -> IO ()
 removeUser usr pwd = do
     verified <- verifyPwd usr pwd
     if verified
         then do
-            putStrLn $
-                concat
-                    [ "Are you sure you want to remove "
-                    , usr
-                    , "'s account? (y = yes)"
-                    ]
-            response <- getLine
-            when (map toLower response == "y") $ do
-                usrDir <- getUserDir usr
-                Dir.removeDirectoryRecursive usrDir
+            usrDir <- getUserDir usr
+            Dir.removeDirectoryRecursive usrDir
         else error "Incorrect username/password!"
 
 -- | verify the given username's password
@@ -153,7 +147,7 @@ removeService usr pwd srv = do
         else error $ concat [srv, " is not a service registered to ", usr, " !"]
 
 -- | retrieve service username
-getServiceUsername :: Username -> Password -> Service -> IO String
+getServiceUsername :: Username -> Password -> Service -> IO Username
 getServiceUsername usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
     if exists
@@ -165,7 +159,7 @@ getServiceUsername usr pwd srv = do
         else error "Service does not exist!"
 
 -- | retrieve service password
-getServicePassword :: Username -> Password -> Service -> IO String
+getServicePassword :: Username -> Password -> Service -> IO Password
 getServicePassword usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
     if exists
@@ -312,7 +306,7 @@ doesServiceExist usr pwd srv = do
         else error "Incorrect username/password!"
 
 -- | PassGenMan directory
-getPgmDir :: IO String
+getPgmDir :: IO FilePath
 getPgmDir = Dir.getAppUserDataDirectory "PassGenMan"
 
 -- | file path for given user
@@ -348,7 +342,7 @@ getUserPwdHash usr = do
         else error "User does not exist!"
 
 -- | generate random password of given length
-randomPwd :: Int -> IO String
+randomPwd :: Int -> IO Password
 randomPwd = randomString $ onlyPrintable randomASCII
 
 getServicePathReadHdl :: Username -> Service -> IO (FilePath, Sys.Handle)
