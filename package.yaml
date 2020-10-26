@@ -19,33 +19,29 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/Isaac-DeFrain/PassGenMan#readme>
 
 ghc-options:
-  # Useful warnings
-  - -Wall
-  - -Wcompat
-  - -Wredundant-constraints
-  - -Wincomplete-record-updates
-  - -Wincomplete-uni-patterns
+  - -fno-warn-orphans
+
+default-extensions:
+  - DeriveGeneric
+  - FlexibleInstances
+  - GADTs
+  - StandaloneDeriving
 
 dependencies:
   - base >= 4.7 && < 5
   - bytestring
+  - containers
   - cryptonite
   - directory
+  - hspec
   - memory
   - random
   - random-strings
   - optparse-applicative
+  - QuickCheck
 
 library:
-  main:                 Lib.hs
   source-dirs:          src
-  dependencies:
-  - bytestring
-  - cryptonite
-  - directory
-  - memory
-  - random
-  - random-strings
 
 executables:
   passgenman:
@@ -57,7 +53,6 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - PassGenMan
-    - optparse-applicative
 
 tests:
   PassGenMan-test:
@@ -69,5 +64,3 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - PassGenMan
-    - hspec
-    - QuickCheck
