@@ -1,6 +1,10 @@
 # PassGenMan
 
-Simple password generator and manager
+Simple password generator and manager.
+
+Focus is on simplicity, security, reliability, and verifiability.
+
+Extensively utilizes property based testing.
 
 ## Description
 
