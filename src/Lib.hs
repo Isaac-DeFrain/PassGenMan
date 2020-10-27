@@ -1,6 +1,4 @@
 -- TODO: salt password before hashing
--- TODO: error handling?
--- TODO: automatic backup in specified directory - set up when user is created
 module Lib
     ( users
     , printServices
@@ -265,7 +263,6 @@ getAllServiceData usr pwd = do
                     err:_ -> Left err
 
 -- | change PassGenMan password
--- TODO: change encryption of all service data
 changePgmPassword ::
        Username
     -> Password -- ^ old PGM password
@@ -550,6 +547,7 @@ getUserBackupDir usr = do
             return $ Right buDir
         else return . Left $ "A backup directory has not been set for " ++ usr
 
+-- | copy user's PGM directory to their backup directory
 backUpUser :: Username -> Password -> IO ()
 backUpUser usr pwd = do
     verified <- verifyPwd usr pwd
@@ -561,7 +559,6 @@ backUpUser usr pwd = do
                 Left err -> putStrLn err
                 Right buDir -> backUpPaths usr buDir
 
--- copy user's PGM directory to their backup directory
 -- | separates files and directories
 separateContentsInDir :: FilePath -> IO ([FilePath], [FilePath])
 separateContentsInDir dir = do
