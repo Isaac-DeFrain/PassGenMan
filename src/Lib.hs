@@ -3,7 +3,7 @@
 -- TODO: automatic backup in specified directory - set up when user is created
 module Lib
     ( users
-    , services
+    , printServices
     , createUser
     , removeUser
     , removeService
@@ -14,20 +14,23 @@ module Lib
     , changeServiceUsername
     , changeServicePasswordRandom
     , changeServicePasswordManual
-    , getServiceData
-    , getServicePassword
-    , getServiceUsername
-    , getAllServiceData
+    , printServiceData
+    , printServicePassword
+    , printServiceUsername
+    , printAllServiceData
     , getUserDir
     , sha256
     , separateContentsInDir
+    , backUpUser
+    , setUserBackupDir
     ) where
 
-import Control.Monad (filterM, replicateM, unless, when)
+import Control.Monad (filterM, replicateM, unless)
 import Crypto
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteString.Char8 as BS
 import Data.Char (toLower)
+import Data.Either (lefts, rights)
 import Data.List (sort)
 import qualified System.Directory as Dir
 import qualified System.IO as Sys
@@ -42,15 +45,23 @@ users = do
   where
     removeDot = drop 1
 
+-- | print the list of services registered to the given user
+printServices :: Username -> Password -> IO ()
+printServices usr pwd = do
+    srvs' <- services usr pwd
+    case srvs' of
+        Left err -> putStrLn err
+        Right srvs -> putStr $ unlines srvs
+
 -- | list of services registered to the given user
-services :: Username -> Password -> IO [Service]
+services :: Username -> Password -> IO (Either String [Service])
 services usr pwd = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
+    case verified of
+        Left err -> return $ Left err
+        Right _ -> do
             usrServices <- getUserServicesDir usr
-            sort . map dropDot <$> Dir.listDirectory usrServices
-        else error "Incorrect password!"
+            Right . sort . map dropDot <$> Dir.listDirectory usrServices
   where
     dropDot = drop 1
 
@@ -59,16 +70,21 @@ createUser :: Username -> Password -> IO ()
 createUser usr pwd =
     unless ('/' `elem` usr) $ do
         exists <- doesUserExist usr
-        if not exists
-            then do
+        case exists of
+            Left _ -> do
                 srvDir <- getUserServicesDir usr
                 pwdFile <- getUserPwdFilePath usr
                 buFile <- getUserBackupFilePath usr
                 Dir.createDirectoryIfMissing True srvDir
                 Sys.writeFile pwdFile $ hashStr ++ "\n"
                 Sys.writeFile buFile ""
-            else error
-                     "User already exists! If you desire to overwrite this user, remove them and create them again."
+                putStrLn $
+                    "This glorious day will forever be remembered as the birthday of " ++
+                    usr
+            Right _ ->
+                putStrLn $
+                "A doppelganger has been spotted!\n" ++
+                usr ++ " already exists!"
   where
     hashStr = sha256 pwd
 
@@ -76,21 +92,33 @@ createUser usr pwd =
 removeUser :: Username -> Password -> IO ()
 removeUser usr pwd = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
+    case verified of
+        Left err -> putStrLn $ "Cannot remove " ++ usr ++ ": " ++ err
+        Right _ -> do
             usrDir <- getUserDir usr
             Dir.removeDirectoryRecursive usrDir
-        else error "Incorrect username/password!"
+            putStr $
+                unlines
+                    [ "You have both the power to create and destroy."
+                    , "Today, you chose destruction."
+                    , usr ++ " has been oblierated."
+                    ]
 
 -- | verify the given username's password
-verifyPwd :: Username -> Password -> IO Bool
+verifyPwd :: Username -> Password -> IO (Either String Affirmative)
 verifyPwd usr pwd = do
     exists <- doesUserExist usr
-    if exists
-        then do
-            pwdHash <- getUserPwdHash usr
-            return $ sha256 pwd == pwdHash
-        else error "User does not exist!"
+    case exists of
+        Left _ -> return $ Left "Invalid username/password!"
+        Right _ -> do
+            pwdHash' <- getUserPwdHash usr
+            return $
+                case pwdHash' of
+                    Left _ -> Left "Invalid username/password!"
+                    Right pwdHash ->
+                        if sha256 pwd == pwdHash
+                            then Right Y
+                            else Left "Invalid username/password!"
 
 -- | pseudorandomly create service password
 addServiceRandomPassword ::
@@ -102,17 +130,20 @@ addServiceRandomPassword ::
     -> IO ()
 addServiceRandomPassword usr pwd srv susr len = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
+    case verified of
+        Left err -> putStrLn err
+        Right _ -> do
             srvFilePath <- getUserServiceFilePath usr srv
-            if len >= 8
-                then do
-                    rpwd <- randomPwd len
-                    encryptUsrPwdAndWrite pwd susr rpwd srvFilePath
-                else do
-                    rpwd <- randomPwd 8
-                    encryptUsrPwdAndWrite pwd susr rpwd srvFilePath
-        else error "Incorrect username/password!"
+            rpwd <- randomPwd len
+            encryptUsrPwdAndWrite pwd susr rpwd srvFilePath
+            putStrLn $
+                concat
+                    [ "Congratulations "
+                    , usr
+                    , ", your "
+                    , srv
+                    , " username and password have been securely created and stored."
+                    ]
 
 -- | create service with manual password
 addServiceManualPassword ::
@@ -124,72 +155,114 @@ addServiceManualPassword ::
     -> IO ()
 addServiceManualPassword usr pwd srv susr spwd = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
+    case verified of
+        Left err -> putStrLn err
+        Right _ -> do
             putStrLn "Confirm new password: "
             newPwd <- getLine
             if newPwd == spwd
                 then do
                     srvFilePath <- getUserServiceFilePath usr srv
                     encryptUsrPwdAndWrite pwd susr spwd srvFilePath
-                else error "Passwords do not match! Try again."
-        else error "Incorrect username/password!"
+                    putStrLn $
+                        concat
+                            [ "Congratulations "
+                            , usr
+                            , ", your "
+                            , srv
+                            , " username and password have been securely created and stored."
+                            ]
+                else putStrLn
+                         "Unfortunately, those passwords do not match. Try again."
 
 -- | remove the specified service from the given user
 removeService :: Username -> Password -> Service -> IO ()
 removeService usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
-    if exists
-        then do
+    case exists of
+        Left err -> putStrLn err
+        Right _ -> do
             srvFilePath <- getUserServiceFilePath usr srv
             Dir.removeFile srvFilePath
-        else error $ concat [srv, " is not a service registered to ", usr, " !"]
 
 -- | retrieve service username
-getServiceUsername :: Username -> Password -> Service -> IO Username
-getServiceUsername usr pwd srv = do
+printServiceUsername :: Username -> Password -> Service -> IO ()
+printServiceUsername usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
-    if exists
-        then do
+    case exists of
+        Left err -> putStrLn err
+        Right _ -> do
             (_, hdl) <- getServicePathReadHdl usr srv
             [encSUsr, _] <- getNlines 2 hdl
             Sys.hClose hdl
-            decrypt pwd encSUsr
-        else error "Service does not exist!"
+            susr <- decrypt pwd encSUsr
+            putStrLn $ "Username: " ++ susr
 
--- | retrieve service password
-getServicePassword :: Username -> Password -> Service -> IO Password
-getServicePassword usr pwd srv = do
+-- | print user's given service password
+printServicePassword :: Username -> Password -> Service -> IO ()
+printServicePassword usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
-    if exists
-        then do
+    case exists of
+        Left err -> putStrLn err
+        Right _ -> do
             (_, hdl) <- getServicePathReadHdl usr srv
             [_, encSrvPwd] <- getNlines 2 hdl
             Sys.hClose hdl
-            decrypt pwd encSrvPwd
-        else error "Service does not exist!"
+            spwd <- decrypt pwd encSrvPwd
+            putStrLn $ "Password: " ++ spwd
+
+-- | print requested service data
+printServiceData :: Username -> Password -> Service -> IO ()
+printServiceData usr pwd srv =
+    putStrLn srv >> printServiceUsername usr pwd srv >>
+    printServicePassword usr pwd srv >>
+    putStrLn ""
 
 -- | retrieve service (name, username, password)
 getServiceData ::
-       Username -> Password -> Service -> IO (Service, Username, Password)
+       Username
+    -> Password
+    -> Service
+    -> IO (Either String (Service, Username, Password))
 getServiceData usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
-    if exists
-        then do
+    case exists of
+        Left err -> return $ Left err
+        Right _ -> do
             (_, hdl) <- getServicePathReadHdl usr srv
             serviceData <- getNlines 2 hdl
             Sys.hClose hdl
-            serviceTuple serviceData
-        else error "Service does not exist!"
+            Right <$> serviceTuple serviceData
   where
     serviceTuple l = do
-        usr' <- decrypt pwd $ head l
-        pwd' <- decrypt pwd $ l !! 1
-        return (srv, usr', pwd')
+        susr <- decrypt pwd $ head l
+        spwd <- decrypt pwd $ l !! 1
+        return (srv, susr, spwd)
+
+printAllServiceData :: Username -> Password -> IO ()
+printAllServiceData usr pwd = do
+    srvData' <- getAllServiceData usr pwd
+    case srvData' of
+        Left err -> putStrLn err
+        Right srvData -> printAllServiceData' srvData
+  where
+    printAllServiceData' = mapM_ (\(s, _, _) -> printServiceData usr pwd s)
 
 -- | list all service data registered to given user
-getAllServiceData :: Username -> Password -> IO [(Service, Username, Password)]
-getAllServiceData usr pwd = mapM (getServiceData usr pwd) =<< services usr pwd
+getAllServiceData ::
+       Username
+    -> Password
+    -> IO (Either String [(Service, Username, Password)])
+getAllServiceData usr pwd = do
+    srvs' <- services usr pwd
+    case srvs' of
+        Left err -> return $ Left err
+        Right srvs -> do
+            srvData <- mapM (getServiceData usr pwd) srvs
+            return $
+                case lefts srvData of
+                    [] -> Right $ rights srvData
+                    err:_ -> Left err
 
 -- | change PassGenMan password
 -- TODO: change encryption of all service data
@@ -200,15 +273,21 @@ changePgmPassword ::
     -> IO ()
 changePgmPassword usr old new = do
     verified <- verifyPwd usr old
-    if verified
-        then do
+    case verified of
+        Left err -> putStrLn err
+        Right _ -> do
             pwdFilePath <- getUserPwdFilePath usr
             putStrLn "Confirm new password: "
             pwd <- getLine
             if pwd == new
-                then Sys.writeFile pwdFilePath $ sha256 new ++ "\n"
-                else error "Passwords do not match! Try again."
-        else error "Incorrect username/password!"
+                then do
+                    srvs' <- services usr old
+                    case srvs' of
+                        Left err -> putStrLn err
+                        Right srvs -> do
+                            Sys.writeFile pwdFilePath $ sha256 new ++ "\n"
+                            mapM_ (changeServiceData usr old new) srvs
+                else putStrLn "Passwords do not match! Try again."
 
 -- | change PassGenMan username
 changePgmUsername ::
@@ -218,12 +297,12 @@ changePgmUsername ::
     -> IO ()
 changePgmUsername usr pwd new = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
+    case verified of
+        Left err -> putStrLn err
+        Right _ -> do
             pgmDir <- getPgmDir
             usrDir <- getUserDir usr
             Dir.renameDirectory usrDir $ pgmDir ++ "/." ++ new
-        else error "Incorrect username/password!"
 
 -- | pseudorandomly generate new service password
 changeServicePasswordRandom ::
@@ -234,17 +313,21 @@ changeServicePasswordRandom ::
     -> IO ()
 changeServicePasswordRandom usr pwd srv len = do
     exists <- doesServiceExist usr pwd srv
-    when exists $ do
-        (srvFilePath, hdl) <- getServicePathReadHdl usr srv
-        new <- randomPwd len
-        encPwd <- encrypt pwd new
-        encSUsr <- Sys.hGetLine hdl
-        susr <- decrypt pwd encSUsr
-        Sys.hClose hdl
-        hdl' <- Sys.openFile srvFilePath Sys.WriteMode
-        Sys.hPutStrLn hdl' $ unlines [encSUsr, encPwd]
-        Sys.hClose hdl'
-        putStrLn $ concat ["New ", srv, " password for ", susr, ": ", new]
+    case exists of
+        Left err -> putStrLn err
+        Right _ -> do
+            (srvFilePath, susr, old) <- getServicePathContents usr pwd srv
+            new <- randomPwd len
+            writeServiceContents srvFilePath pwd (susr, new)
+            putStrLn $
+                concat
+                    [ "Your old "
+                    , srv
+                    , " password "
+                    , old
+                    , " has been changed to "
+                    , new
+                    ]
 
 -- | manually change service password
 changeServicePasswordManual ::
@@ -253,26 +336,50 @@ changeServicePasswordManual ::
     -> Service
     -> Password -- ^ new service password
     -> IO ()
-changeServicePasswordManual usr pwd srv spwd = do
-    exists <- doesServiceExist usr pwd srv
-    if exists
-        then do
-            (srvFilePath, hdl) <- getServicePathReadHdl usr srv
-            encSUsr <- Sys.hGetLine hdl
-            susr <- decrypt pwd encSUsr
-            encSPwd <- encrypt pwd spwd
-            Sys.hClose hdl
-            putStrLn "confirm new password: "
-            newPwd <- getLine
-            if newPwd == spwd
-                then do
-                    hdl' <- Sys.openFile srvFilePath Sys.WriteMode
-                    Sys.hPutStrLn hdl' $ unlines [encSUsr, encSPwd]
-                    Sys.hClose hdl'
-                    putStrLn $
-                        concat ["New ", srv, " password for ", susr, ": ", spwd]
-                else error "Passwords do not match! Try again."
-        else error "Service does not exist!"
+changeServicePasswordManual usr pwd srv new =
+    if length new < 8
+        then putStrLn
+                 "For the love of security, your password must conatain at least 8 characters!"
+        else do
+            exists <- doesServiceExist usr pwd srv
+            case exists of
+                Left err -> putStrLn err
+                Right _ -> do
+                    (srvFilePath, susr, old) <-
+                        getServicePathContents usr pwd srv
+                    putStrLn "Confirm new password: "
+                    newPwd <- getLine
+                    if newPwd == new
+                        then do
+                            writeServiceContents srvFilePath pwd (susr, new)
+                            putStrLn $
+                                concat
+                                    [ "Your old "
+                                    , srv
+                                    , " password "
+                                    , old
+                                    , " has been changed to "
+                                    , new
+                                    ]
+                        else putStrLn "Passwords do not match! Try again."
+
+getServicePathContents ::
+       Username -> Password -> Service -> IO (FilePath, Username, Password)
+getServicePathContents usr pwd srv = do
+    (srvFilePath, hdl) <- getServicePathReadHdl usr srv
+    [encSUsr, encSPwd] <- getNlines 2 hdl
+    susr <- decrypt pwd encSUsr
+    spwd <- decrypt pwd encSPwd
+    Sys.hClose hdl
+    return (srvFilePath, susr, spwd)
+
+writeServiceContents :: FilePath -> Password -> (Username, Password) -> IO ()
+writeServiceContents srvFilePath pwd (susr, spwd) = do
+    hdl <- Sys.openFile srvFilePath Sys.WriteMode
+    encSUsr <- encrypt pwd susr
+    encSPwd <- encrypt pwd spwd
+    Sys.hPutStrLn hdl $ unlines [encSUsr, encSPwd]
+    Sys.hClose hdl
 
 -- | pseudorandomly generate new service password
 changeServiceUsername ::
@@ -283,34 +390,74 @@ changeServiceUsername ::
     -> IO ()
 changeServiceUsername usr pwd srv new = do
     exists <- doesServiceExist usr pwd srv
-    when exists $ do
-        (srvFilePath, hdl) <- getServicePathReadHdl usr srv
-        [_, encSPwd] <- getNlines 2 hdl
-        Sys.hClose hdl
-        hdl' <- Sys.openFile srvFilePath Sys.WriteMode
-        encSUsr <- encrypt pwd new
-        Sys.hPutStrLn hdl' $ unlines [encSUsr, encSPwd]
-        Sys.hClose hdl'
-        putStrLn $ concat ["New ", map toLower srv, " username: ", new]
+    case exists of
+        Left err -> putStrLn err
+        Right _ -> do
+            (srvFilePath, hdl) <- getServicePathReadHdl usr srv
+            [encSUsr', encSPwd] <- getNlines 2 hdl
+            old <- decrypt pwd encSUsr'
+            Sys.hClose hdl
+            hdl' <- Sys.openFile srvFilePath Sys.WriteMode
+            encSUsr <- encrypt pwd new
+            Sys.hPutStrLn hdl' $ unlines [encSUsr, encSPwd]
+            Sys.hClose hdl'
+            putStrLn $
+                concat
+                    [ "Your old "
+                    , srv
+                    , " username "
+                    , old
+                    , " has been changed to "
+                    , new
+                    ]
+
+-- | changes the encryption password for the given service
+changeServiceData :: Username -> Password -> Password -> Service -> IO ()
+changeServiceData usr pwd new srv = do
+    (srvFilePath, hdl) <- getServicePathReadHdl usr srv
+    [encSUsr', encSPwd'] <- getNlines 2 hdl
+    susr <- decrypt pwd encSUsr'
+    spwd <- decrypt pwd encSPwd'
+    Sys.hClose hdl
+    Dir.removeFile srvFilePath
+    hdl' <- Sys.openFile srvFilePath Sys.WriteMode
+    encSUsr <- encrypt new susr
+    encSPwd <- encrypt new spwd
+    Sys.hPutStrLn hdl' $ unlines [encSUsr, encSPwd]
+    Sys.hClose hdl'
 
 ----------------------
 -- helper functions --
 ----------------------
--- for convenience
 sha256 :: Password -> String
 sha256 = show . Hash.hashWith Hash.SHA256 . BS.pack
 
 -- | verify existence of user
-doesUserExist :: Username -> IO Bool
-doesUserExist usr = elem usr <$> users
+doesUserExist :: Username -> IO (Either String Affirmative)
+doesUserExist usr = do
+    res <- elem usr <$> users
+    return $
+        if res
+            then Right Y
+            else Left $ "User " ++ usr ++ " does not exist!"
 
 -- | verify existence of service for user
-doesServiceExist :: Username -> Password -> Service -> IO Bool
+doesServiceExist ::
+       Username -> Password -> Service -> IO (Either String Affirmative)
 doesServiceExist usr pwd srv = do
     verified <- verifyPwd usr pwd
-    if verified
-        then elem (map toLower srv) <$> services usr pwd
-        else error "Incorrect username/password!"
+    case verified of
+        Left err -> return $ Left err
+        Right _ -> do
+            srvs' <- services usr pwd
+            case srvs' of
+                Left err -> return $ Left err
+                Right srvs ->
+                    return $
+                    if map toLower srv `elem` srvs
+                        then Right Y
+                        else Left $
+                             srv ++ " is not a service registered to " ++ usr
 
 -- | PassGenMan directory
 getPgmDir :: IO FilePath
@@ -343,20 +490,23 @@ getUserServicesDir usr =
     Dir.getAppUserDataDirectory $ "PassGenMan/." ++ usr ++ "/.services"
 
 -- | retrieve user's password hash
-getUserPwdHash :: Username -> IO String
+getUserPwdHash :: Username -> IO (Either String String)
 getUserPwdHash usr = do
     pwdFilePath <- getUserPwdFilePath usr
     exists <- Dir.doesFileExist pwdFilePath
     if exists
         then do
             hdl <- Sys.openFile pwdFilePath Sys.ReadMode
-            contents <- Sys.hGetContents hdl
-            return $ init contents
-        else error "User does not exist!"
+            hash <- Sys.hGetContents hdl
+            -- delete '\n' from end
+            return . Right $ init hash
+        else return $ Left "User does not exist!"
 
 -- | generate random password of given length
 randomPwd :: Int -> IO Password
-randomPwd = randomString $ onlyPrintable randomASCII
+randomPwd n
+    | n <= 8 = randomString (onlyPrintable randomASCII) 8
+    | otherwise = randomString (onlyPrintable randomASCII) n
 
 -- | user's services directory with handle in read mode
 getServicePathReadHdl :: Username -> Service -> IO (FilePath, Sys.Handle)
@@ -365,6 +515,7 @@ getServicePathReadHdl usr srv = do
     hdl <- Sys.openFile srvFilePath Sys.ReadMode
     return (srvFilePath, hdl)
 
+-- | get the specified number of lines from the given file handle
 getNlines :: Int -> Sys.Handle -> IO [String]
 getNlines n hdl = replicateM n $ Sys.hGetLine hdl
 
@@ -379,17 +530,15 @@ encryptUsrPwdAndWrite p su sp sfp = do
 setUserBackupDir :: Username -> Password -> FilePath -> IO ()
 setUserBackupDir usr pwd buDir = do
     verified <- verifyPwd usr pwd
-    if verified
-        then do
-            exists <- Dir.doesDirectoryExist buDir
-            if exists
-                then do
-                    buFile <- getUserBackupFilePath usr
-                    Sys.writeFile buFile $ buDir ++ "\n"
-                else error "Backup directory does not exist!"
-        else error "Incorrect username/password!"
+    case verified of
+        Left err -> putStrLn err
+        Right _ -> do
+            _ <- Dir.createDirectoryIfMissing True buDir
+            _ <- Dir.createDirectoryIfMissing True $ buDir ++ "/.services"
+            buFile <- getUserBackupFilePath usr
+            Sys.writeFile buFile $ buDir ++ "\n"
 
--- | user back up directory
+-- | user backup directory
 getUserBackupDir :: Username -> IO (Either String FilePath)
 getUserBackupDir usr = do
     buFile <- getUserBackupFilePath usr
@@ -397,20 +546,23 @@ getUserBackupDir usr = do
     if exists
         then do
             hdl <- Sys.openFile buFile Sys.ReadMode
-            buDir <- Sys.hGetContents hdl
+            buDir <- Sys.hGetLine hdl
             return $ Right buDir
         else return . Left $ "A backup directory has not been set for " ++ usr
 
-backupUser :: Username -> IO ()
-backupUser usr = do
-    res <- getUserBackupDir usr
-    case res of
+backUpUser :: Username -> Password -> IO ()
+backUpUser usr pwd = do
+    verified <- verifyPwd usr pwd
+    case verified of
         Left err -> putStrLn err
-        Right _buDir -> undefined
+        Right _ -> do
+            res <- getUserBackupDir usr
+            case res of
+                Left err -> putStrLn err
+                Right buDir -> backUpPaths usr buDir
 
 -- copy user's PGM directory to their backup directory
 -- | separates files and directories
--- TODO: make filepaths absolute and recursively list subdirectory contents
 separateContentsInDir :: FilePath -> IO ([FilePath], [FilePath])
 separateContentsInDir dir = do
     contents <- Dir.listDirectory dir
@@ -423,3 +575,20 @@ isDirectoryInDir dir = Dir.withCurrentDirectory dir . Dir.doesDirectoryExist
 
 isFileInDir :: FilePath -> FilePath -> IO Bool
 isFileInDir dir = Dir.withCurrentDirectory dir . Dir.doesFileExist
+
+allAbsFilePathsInDir :: FilePath -> IO [FilePath]
+allAbsFilePathsInDir dir = do
+    (files', dirs) <- separateContentsInDir dir
+    files <- mapM (Dir.withCurrentDirectory dir . Dir.makeAbsolute) files'
+    rest <- mapM (Dir.withCurrentDirectory dir . allAbsFilePathsInDir) dirs
+    return $ files ++ concat rest
+
+backUpPaths :: Username -> FilePath -> IO ()
+backUpPaths usr buDir = do
+    usrDir <- getUserDir usr
+    absPaths <- allAbsFilePathsInDir usrDir
+    let prefix = length usrDir
+        relPaths = map (drop prefix) absPaths
+        buPaths = map (buDir ++) relPaths
+        both = zip absPaths buPaths
+    mapM_ (uncurry Dir.copyFile) both
