@@ -1,4 +1,3 @@
--- TODO: salt password before hashing
 module Lib
     ( users
     , printServices
@@ -21,6 +20,10 @@ module Lib
     , separateContentsInDir
     , backUpUser
     , setUserBackupDir
+    , unsafeServices
+    , unsafeGetServiceData
+    , unsafeGetAllServiceData
+    , unsafeChangePgmPassword
     ) where
 
 import Control.Monad (filterM, replicateM, unless)
@@ -32,7 +35,7 @@ import Data.Either (lefts, rights)
 import Data.List (sort)
 import qualified System.Directory as Dir
 import qualified System.IO as Sys
-import Test.RandomStrings (onlyPrintable, randomASCII, randomString)
+import qualified Test.QuickCheck as QC
 import Types
 
 -- | list of known users
@@ -63,6 +66,13 @@ services usr pwd = do
   where
     dropDot = drop 1
 
+unsafeServices :: Username -> Password -> IO [Service]
+unsafeServices usr pwd = do
+    srvs' <- services usr pwd
+    case srvs' of
+        Left err -> error err
+        Right srvs -> return srvs
+
 -- | create new user directory
 createUser :: Username -> Password -> IO ()
 createUser usr pwd =
@@ -74,7 +84,8 @@ createUser usr pwd =
                 pwdFile <- getUserPwdFilePath usr
                 buFile <- getUserBackupFilePath usr
                 Dir.createDirectoryIfMissing True srvDir
-                Sys.writeFile pwdFile $ hashStr ++ "\n"
+                salt <- salt'
+                Sys.writeFile pwdFile $ unlines [sha256 $ salt ++ pwd, salt]
                 Sys.writeFile buFile ""
                 putStrLn $
                     "This glorious day will forever be remembered as the birthday of " ++
@@ -83,8 +94,6 @@ createUser usr pwd =
                 putStrLn $
                 "A doppelganger has been spotted!\n" ++
                 usr ++ " already exists!"
-  where
-    hashStr = sha256 pwd
 
 -- | remove a PassGenMan user
 removeUser :: Username -> Password -> IO ()
@@ -99,7 +108,7 @@ removeUser usr pwd = do
                 unlines
                     [ "You have both the power to create and destroy."
                     , "Today, you chose destruction."
-                    , usr ++ " has been oblierated."
+                    , usr ++ " has been obliterated."
                     ]
 
 -- | verify the given username's password
@@ -109,12 +118,12 @@ verifyPwd usr pwd = do
     case exists of
         Left _ -> return $ Left "Invalid username/password!"
         Right _ -> do
-            pwdHash' <- getUserPwdHash usr
+            pwdHashAndSalt <- getUserPwdHashAndSalt usr
             return $
-                case pwdHash' of
+                case pwdHashAndSalt of
                     Left _ -> Left "Invalid username/password!"
-                    Right pwdHash ->
-                        if sha256 pwd == pwdHash
+                    Right (pwdHash, salt) ->
+                        if pwdHash == sha256 (salt ++ pwd)
                             then Right Y
                             else Left "Invalid username/password!"
 
@@ -124,15 +133,14 @@ addServiceRandomPassword ::
     -> Password -- ^ PassGenMan password
     -> Service
     -> Username -- ^ service username
-    -> Int -- ^ required length of password >= 8
     -> IO ()
-addServiceRandomPassword usr pwd srv susr len = do
+addServiceRandomPassword usr pwd srv susr = do
     verified <- verifyPwd usr pwd
     case verified of
         Left err -> putStrLn err
         Right _ -> do
             srvFilePath <- getUserServiceFilePath usr srv
-            rpwd <- randomPwd len
+            rpwd <- randomPwd
             encryptUsrPwdAndWrite pwd susr rpwd srvFilePath
             putStrLn $
                 concat
@@ -262,6 +270,22 @@ getAllServiceData usr pwd = do
                     [] -> Right $ rights srvData
                     err:_ -> Left err
 
+unsafeGetServiceData ::
+       Username -> Password -> Service -> IO (Service, Username, Password)
+unsafeGetServiceData usr pwd srv = do
+    srvData' <- getServiceData usr pwd srv
+    case srvData' of
+        Left err -> error err
+        Right srvData -> return srvData
+
+unsafeGetAllServiceData ::
+       Username -> Password -> IO [(Service, Username, Password)]
+unsafeGetAllServiceData usr pwd = do
+    srvData' <- getAllServiceData usr pwd
+    case srvData' of
+        Left err -> error err
+        Right srvData -> return srvData
+
 -- | change PassGenMan password
 changePgmPassword ::
        Username
@@ -282,9 +306,33 @@ changePgmPassword usr old new = do
                     case srvs' of
                         Left err -> putStrLn err
                         Right srvs -> do
-                            Sys.writeFile pwdFilePath $ sha256 new ++ "\n"
-                            mapM_ (changeServiceData usr old new) srvs
+                            pwdHashAndSalt <- getUserPwdHashAndSalt usr
+                            case pwdHashAndSalt of
+                                Left err -> putStrLn err
+                                Right (_, salt) -> do
+                                    Sys.writeFile pwdFilePath $
+                                        unlines [sha256 $ salt ++ new, salt]
+                                    mapM_ (changeServiceData usr old new) srvs
                 else putStrLn "Passwords do not match! Try again."
+
+unsafeChangePgmPassword :: Username -> Password -> Password -> IO ()
+unsafeChangePgmPassword usr old new = do
+    verified <- verifyPwd usr old
+    case verified of
+        Left err -> error err
+        Right _ -> do
+            pwdFilePath <- getUserPwdFilePath usr
+            srvs' <- services usr old
+            case srvs' of
+                Left err -> putStrLn err
+                Right srvs -> do
+                    pwdHashAndSalt <- getUserPwdHashAndSalt usr
+                    case pwdHashAndSalt of
+                        Left err -> error err
+                        Right (_, salt) -> do
+                            Sys.writeFile pwdFilePath $
+                                unlines [sha256 $ salt ++ new, salt]
+                            mapM_ (changeServiceData usr old new) srvs
 
 -- | change PassGenMan username
 changePgmUsername ::
@@ -306,15 +354,14 @@ changeServicePasswordRandom ::
        Username -- ^ PassGenMan username
     -> Password -- ^ PassGenMan password
     -> Service
-    -> Int -- ^ length of new service password
     -> IO ()
-changeServicePasswordRandom usr pwd srv len = do
+changeServicePasswordRandom usr pwd srv = do
     exists <- doesServiceExist usr pwd srv
     case exists of
         Left err -> putStrLn err
         Right _ -> do
             (srvFilePath, susr, old) <- getServicePathContents usr pwd srv
-            new <- randomPwd len
+            new <- randomPwd
             writeServiceContents srvFilePath pwd (susr, new)
             putStrLn $
                 concat
@@ -487,23 +534,23 @@ getUserServicesDir usr =
     Dir.getAppUserDataDirectory $ "PassGenMan/." ++ usr ++ "/.services"
 
 -- | retrieve user's password hash
-getUserPwdHash :: Username -> IO (Either String String)
-getUserPwdHash usr = do
+getUserPwdHashAndSalt :: Username -> IO (Either String (String, String))
+getUserPwdHashAndSalt usr = do
     pwdFilePath <- getUserPwdFilePath usr
     exists <- Dir.doesFileExist pwdFilePath
     if exists
         then do
             hdl <- Sys.openFile pwdFilePath Sys.ReadMode
-            hash <- Sys.hGetContents hdl
-            -- delete '\n' from end
-            return . Right $ init hash
+            [pwdHash, salt] <- getNlines 2 hdl
+            Sys.hClose hdl
+            return $ Right (pwdHash, salt)
         else return $ Left "User does not exist!"
 
 -- | generate random password of given length
-randomPwd :: Int -> IO Password
-randomPwd n
-    | n <= 8 = randomString (onlyPrintable randomASCII) 8
-    | otherwise = randomString (onlyPrintable randomASCII) n
+randomPwd :: IO Password
+randomPwd =
+    QC.generate $
+    QC.choose (15, 30) >>= \len -> QC.vectorOf len $ QC.choose (' ', '~')
 
 -- | user's services directory with handle in read mode
 getServicePathReadHdl :: Username -> Service -> IO (FilePath, Sys.Handle)
