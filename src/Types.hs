@@ -1,7 +1,3 @@
-{-# LANGUAGE FlexibleInstances, DeriveGeneric, StandaloneDeriving
-  #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
-
 module Types where
 
 import qualified Data.ByteArray as BA
@@ -14,9 +10,9 @@ type Password = String
 
 type Service = String
 
-type MustInclude = String
-
-type MustExclude = String
+data Affirmative =
+    Y
+    deriving (Eq)
 
 data ServiceData = ServiceData
     { username :: Username
