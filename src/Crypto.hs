@@ -4,12 +4,14 @@
 module Crypto
     ( encrypt
     , decrypt
+    , salt'
     ) where
 
 import Crypto.Cipher.AES (AES256)
 import Crypto.Cipher.Types (BlockCipher(..), Cipher(..), IV, makeIV)
 import Crypto.Error (CryptoError(..), CryptoFailable(..))
 import qualified Crypto.Hash as Hash
+import qualified Crypto.Random.Types as CRT
 import Data.ByteArray (ByteArray)
 import qualified Data.ByteString.Char8 as BS
 import Types
@@ -27,6 +29,10 @@ initCipher (Key k) =
     case cipherInit k of
         CryptoFailed e -> Left e
         CryptoPassed a -> Right a
+
+-- | salt for password hashes
+salt' :: IO String
+salt' = filter (/= '\n') . BS.unpack <$> CRT.getRandomBytes 32
 
 encrypt' ::
        (BlockCipher c, ByteArray a)
@@ -47,7 +53,6 @@ decrypt' ::
     -> Either CryptoError a
 decrypt' = encrypt'
 
--- | per user initialization
 encrypt ::
        Password
     -> String -- ^ message to encrypt
