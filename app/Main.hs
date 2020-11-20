@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -fno-warn-orphans #-}
-
 module Main where
 
 import Lib
@@ -12,6 +10,7 @@ data Exec
     = EC Create
     | EM Modify
     | ER Remove
+    | EG Get
     deriving (Eq, Ord, Show, Read)
 
 data Create
@@ -21,7 +20,6 @@ data Create
                           Password
                           Service
                           Username
-                          Int
     | CreateServiceManual Username
                           Password
                           Service
@@ -43,7 +41,6 @@ data Modify
     | ModifyServicePasswordRandom Username
                                   Password
                                   Service
-                                  Int
     | ModifyServiceUsername Username
                             Password
                             Service
@@ -58,6 +55,23 @@ data Remove
                     Service
     deriving (Eq, Ord, Show, Read)
 
+data Get
+    = Users
+    | Services Username
+               Password
+    | GetServiceData Username
+                     Password
+                     Service
+    | GetAllServiceData Username
+                        Password
+    | GetServicePassword Username
+                         Password
+                         Service
+    | GetServiceUsername Username
+                         Password
+                         Service
+    deriving (Eq, Ord, Show, Read)
+
 instance Data.String.IsString Create where
     fromString = read
 
@@ -67,38 +81,74 @@ instance Data.String.IsString Int where
 -- TODO: command line parsing
 main :: IO ()
 main = do
-    p <- execParser $ parserInfo createAlt
+    p <- execParser $ parserInfo createParser
     case p of
         EC (CreatePGMUser usr pwd) -> createUser usr pwd
-        EC (CreateServiceRandom usr pwd srv srvUsr n) ->
-            addServiceRandomPassword usr pwd srv srvUsr n
+        EC (CreateServiceRandom usr pwd srv srvUsr) ->
+            addServiceRandomPassword usr pwd srv srvUsr
         EC (CreateServiceManual usr pwd srv srvUsr srvPwd) ->
             addServiceManualPassword usr pwd srv srvUsr srvPwd
-        EM _ -> undefined
-        ER _ -> undefined
+        EM (ModifyPGMPassword usr old new) -> changePgmPassword usr old new
+        EM (ModifyPGMUsername old pwd new) -> changePgmUsername old pwd new
+        EM (ModifyServiceUsername usr pwd srv new) ->
+            changeServiceUsername usr pwd srv new
+        EM (ModifyServicePasswordManual usr pwd srv new) ->
+            changeServicePasswordManual usr pwd srv new
+        EM (ModifyServicePasswordRandom usr pwd srv) ->
+            changeServicePasswordRandom usr pwd srv
+        ER (RemovePGMUser usr pwd) -> removeUser usr pwd
+        ER (RemoveService usr pwd srv) -> removeService usr pwd srv
+        EG Users -> getAndPrint users
+        EG (Services usr pwd) -> printServices usr pwd
+        EG (GetServiceData usr pwd srv) -> printServiceData usr pwd srv
+        EG (GetAllServiceData usr pwd) -> printAllServiceData usr pwd
+        EG (GetServicePassword usr pwd srv) -> printServicePassword usr pwd srv
+        EG (GetServiceUsername usr pwd srv) -> printServiceUsername usr pwd srv
+  where
+    parserInfo p = info p fullDesc
+    getAndPrint get = do
+        x <- get
+        print x
 
-createAlt :: Parser Exec
-createAlt = EC <$> (serviceParser <|> pgmParser)
+-- Ultimate program parser
+pgmParser :: Parser Exec
+pgmParser = createParser <|> modifyParser <|> removeParser <|> getParser
 
-pgmParser :: Parser Create
-pgmParser = CreatePGMUser <$> pgmUsernameParser <*> pgmPasswordParser
+-- TODO: subparsers
+-- Create parser
+createParser :: Parser Exec
+createParser = EC <$> (createServiceParser <|> createPgmUserParser)
 
-serviceParser :: Parser Create
-serviceParser = serviceRandomParser <|> serviceManualParser
+createPgmUserParser :: Parser Create
+createPgmUserParser = CreatePGMUser <$> pgmUsernameParser <*> pgmPasswordParser
 
-serviceRandomParser :: Parser Create
-serviceRandomParser =
+createServiceParser :: Parser Create
+createServiceParser = createServiceRandomParser <|> createServiceManualParser
+
+createServiceRandomParser :: Parser Create
+createServiceRandomParser =
     CreateServiceRandom <$> pgmUsernameParser <*> pgmPasswordParser <*>
     serviceNameParser <*>
-    serviceUsernameParser <*>
-    servicePasswordLengthParser
+    serviceUsernameParser
 
-serviceManualParser :: Parser Create
-serviceManualParser =
+createServiceManualParser :: Parser Create
+createServiceManualParser =
     CreateServiceManual <$> pgmUsernameParser <*> pgmPasswordParser <*>
     serviceNameParser <*>
     serviceUsernameParser <*>
     servicePasswordParser
+
+-- Modify parser
+modifyParser :: Parser Exec
+modifyParser = EM <$> undefined
+
+-- Remove parser
+removeParser :: Parser Exec
+removeParser = ER <$> undefined
+
+-- Get parser
+getParser :: Parser Exec
+getParser = EG <$> undefined
 
 pgmUsernameParser :: Parser Username
 pgmUsernameParser =
@@ -124,6 +174,3 @@ servicePasswordLengthParser =
 servicePasswordParser :: Parser Password
 servicePasswordParser =
     strOption (long "password" <> help "Manually choose password")
-
-parserInfo :: Parser a -> ParserInfo a
-parserInfo p = info p fullDesc
